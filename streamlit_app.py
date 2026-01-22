@@ -138,7 +138,8 @@ if st.button("Evaluate Writing"):
                 json={
                     "test_type": "summarize_written_text",
                     "passage": passage,
-                    "summary": summary
+                    "summary": summary,
+                    "token": "xyz"
                 },
                 verify=False
             )
