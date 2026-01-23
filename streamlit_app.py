@@ -146,8 +146,20 @@ if st.button("Evaluate Writing"):
             data = resp.json()
 
         services = data["services"]
+        form = services["form"]
         content = services["content"]
         lang = services["language"]
+
+        st.divider()
+
+        # -----------------------------
+        # Form Evaluation
+        # -----------------------------
+        st.subheader("📋 Form Evaluation")
+        
+        col1, col2 = st.columns([1, 3])
+        col1.metric("Form Score", form["score"])
+        col2.info(form["feedback"])
 
         st.divider()
 
@@ -184,11 +196,11 @@ if st.button("Evaluate Writing"):
             st.markdown("**Highlighted Summary**")
 
             html = build_highlighted_html(
-                lang["original"],
-                lang["grammar_errors"],
-                lang["mechanics_errors"],
-                lang["spelling"]["misspelled_words"],
-                lang["diffs"]
+                lang.get("original", summary),
+                lang.get("grammar_errors", []),
+                lang.get("mechanics_errors", []),
+                lang.get("spelling", {}).get("misspelled_words", []),
+                lang.get("diffs", [])
             )
 
             st.markdown(
@@ -196,21 +208,25 @@ if st.button("Evaluate Writing"):
                 unsafe_allow_html=True
             )
 
-            st.markdown("**Corrected Version**")
-            st.success(lang["corrected"])
+            if lang.get("corrected"):
+                st.markdown("**Corrected Version**")
+                st.success(lang["corrected"])
 
         with col2:
+            scores = lang.get("scores", {})
             s1, s2, s3 = st.columns(3)
-            s1.metric("Grammar", f"{lang['scores']['grammar']}%")
-            s2.metric("Spelling", f"{lang['scores']['spelling']}%")
-            s3.metric("Vocabulary", f"{lang['scores']['vocabulary']}%")
+            s1.metric("Grammar", f"{scores.get('grammar', 0)}%")
+            s2.metric("Spelling", f"{scores.get('spelling', 0)}%")
+            s3.metric("Vocabulary", f"{scores.get('vocabulary', 0)}%")
 
-            st.markdown("### Vocabulary Insights")
-            for i in lang["vocabulary"]["insights"]:
-                st.info(i)
+            vocab_data = lang.get("vocabulary", {})
+            if vocab_data.get("insights"):
+                st.markdown("### Vocabulary Insights")
+                for i in vocab_data["insights"]:
+                    st.info(i)
 
-            st.markdown("### Grammar Errors")
-            if lang["grammar_errors"]:
+            if lang.get("grammar_errors"):
+                st.markdown("### Grammar Errors")
                 for e in lang["grammar_errors"]:
                     msg = e.get("message", e.get("type"))
                     sug = e.get("suggestion", "")
@@ -218,11 +234,9 @@ if st.button("Evaluate Writing"):
                         st.error(f"{msg} → {sug}")
                     else:
                         st.error(msg)
-            else:
-                st.success("No grammar errors")
 
-            st.markdown("### Mechanics")
-            if lang["mechanics_errors"]:
+            if lang.get("mechanics_errors"):
+                st.markdown("### Mechanics")
                 for m in lang["mechanics_errors"]:
                     if isinstance(m, dict):
                         msg = m.get("message", m.get("type"))
@@ -233,20 +247,17 @@ if st.button("Evaluate Writing"):
                             st.warning(msg)
                     else:
                         st.warning(m)
-            else:
-                st.success("No mechanics issues")
 
-            st.markdown("### Spelling")
-            if lang["spelling"]["misspelled_words"]:
-                for w in lang["spelling"]["misspelled_words"]:
+            spelling_data = lang.get("spelling", {})
+            if spelling_data.get("misspelled_words"):
+                st.markdown("### Spelling")
+                for w in spelling_data["misspelled_words"]:
                     word = w.get("word", "")
                     sug = w.get("suggestion", "")
                     if sug and sug != word:
                         st.error(f"{word} → {sug}")
                     else:
                         st.error(word)
-            else:
-                st.success("No spelling mistakes")
 
         with st.expander("🔍 Raw JSON"):
             st.json(data)
