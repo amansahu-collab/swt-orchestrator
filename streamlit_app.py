@@ -169,9 +169,9 @@ if st.button("Evaluate Writing"):
         st.subheader("📘 Content Evaluation")
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Content Coverage", f"{content['content_percentage']}%")
-        c2.metric("Score", content["score"])
-        c3.metric("Relevance", content["relevance_level"].title())
+        c1.metric("Content Coverage", f"{content.get('content_percentage', 0)}%")
+        c2.metric("Score", content.get("score", 0))
+        c3.metric("Relevance", content.get("relevance_level", "unknown").title())
 
         st.markdown("**Covered Ideas**")
         for i in content["covered_ideas"]:
