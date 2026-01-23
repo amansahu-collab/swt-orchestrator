@@ -174,14 +174,14 @@ if st.button("Evaluate Writing"):
         c3.metric("Relevance", content.get("relevance_level", "unknown").title())
 
         st.markdown("**Covered Ideas**")
-        for i in content["covered_ideas"]:
+        for i in content.get("covered_ideas", []):
             st.success(i)
 
         st.markdown("**Missing Ideas**")
-        for i in content["missing_ideas"]:
+        for i in content.get("missing_ideas", []):
             st.error(i)
 
-        st.info(content["feedback"])
+        st.info(content.get("feedback", "No feedback available"))
 
         st.divider()
 
