@@ -61,8 +61,8 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
                 "start": span["start"],
                 "end": span["end"],
                 "type": "spelling",
-                "message": f"Spelling: {word_info.get('word','')}",
-                "suggestion": word_info.get("suggestion", "")
+                "message": f"Spelling: {word_info.get('original','')}",
+                "suggestion": word_info.get("corrected", "")
             })
 
     grammar_spelling_spans = set()
@@ -199,7 +199,7 @@ if st.button("Evaluate Writing"):
                 lang.get("original", summary),
                 lang.get("grammar_errors", []),
                 lang.get("mechanics_errors", []),
-                lang.get("spelling", {}).get("misspelled_words", []),
+                lang.get("spelling_errors", []),
                 lang.get("diffs", [])
             )
 
@@ -248,12 +248,11 @@ if st.button("Evaluate Writing"):
                     else:
                         st.warning(m)
 
-            spelling_data = lang.get("spelling", {})
-            if spelling_data.get("misspelled_words"):
+            if lang.get("spelling_errors"):
                 st.markdown("### Spelling")
-                for w in spelling_data["misspelled_words"]:
-                    word = w.get("word", "")
-                    sug = w.get("suggestion", "")
+                for w in lang["spelling_errors"]:
+                    word = w.get("original", "")
+                    sug = w.get("corrected", "")
                     if sug and sug != word:
                         st.error(f"{word} → {sug}")
                     else:
