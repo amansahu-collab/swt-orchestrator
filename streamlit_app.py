@@ -131,33 +131,48 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
         # Handle empty spans (insertions)
         if sp["start"] == sp["end"]:
             text_chunk = ""
-            marker = f'<span style="background:#ffd6d6; padding:2px 4px; border-radius:4px; border-bottom:2px solid red; color:red;" title="{sp.get("suggestion", sp["message"])}" style="cursor:help;">⇧{sp.get("suggestion", "")}</span>'
+            marker = f'<span style="background:#ffd6d6; padding:2px 4px; border-radius:4px; border:3px solid red; color:red;" title="{sp.get("suggestion", sp["message"])}" style="cursor:help;">⇧{sp.get("suggestion", "")}</span>'
             html = html[:sp["start"]] + marker + html[sp["start"]:]
             continue
 
         text_chunk = original_text[sp["start"]:sp["end"]]
 
-        # Color coding
+        # Color coding with red circles for errors
         if sp["type"] == "grammar":
             color = "red"
-            bg = "#ffd6d6"
+            bg = "transparent"
+            border = "3px solid red"
         elif sp["type"] == "spelling":
             color = "#ff9800"
-            bg = "#ffe6cc"
+            bg = "transparent"
+            border = "3px solid #ff9800"
         elif sp["type"] == "spacing":
             color = "#9c27b0"
-            bg = "#f3e5f5"
+            bg = "transparent"
+            border = "3px solid #9c27b0"
         else:  # vocabulary
             color = "#555"
             bg = "#fff2cc"
+            border = "none"
 
-        # Build tooltip
-        title = sp["suggestion"] if sp.get("suggestion") else sp["message"]
+        # Build tooltip with error message and suggestion
+        suggestion = sp.get("suggestion", "").strip()
+        message = sp.get("message", "Error")
+        
+        if suggestion:
+            # Show what it should be changed to
+            title = f"{message}\nChange to: {suggestion}"
+        elif sp["type"] in ["grammar", "spacing", "mechanics"]:
+            # For removals, explicitly say to delete/remove
+            title = f"{message}\nRemove: '{text_chunk}'"
+        else:
+            title = message
+        
         title = title.replace('"', '&quot;')  # Escape quotes
 
         marked = (
-            f'<span style="background:{bg}; padding:2px 4px;'
-            f'border-radius:4px; border-bottom:2px solid {color};" '
+            f'<span style="border:{border}; padding:2px 4px;'
+            f'border-radius:4px; background:{bg}; font-weight:500;" '
             f'title="{title}">{text_chunk}</span>'
         )
 
