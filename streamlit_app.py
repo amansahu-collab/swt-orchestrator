@@ -49,13 +49,13 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
     for error in mechanics_errors:
         if isinstance(error, dict) and error.get("span"):
             span = error.get("span")
-            if span["start"] < span["end"]:
+            if span["start"] <= span["end"]:  # Include insertions where start == end
                 all_spans.append({
                     "start": span["start"],
                     "end": span["end"],
                     "type": "grammar",
                     "message": error.get("message", error.get("type", "Mechanics issue")),
-                    "suggestion": error.get("suggestion", ""),
+                    "suggestion": error.get("corrected", ""),
                     "original": original_text[span["start"]:span["end"]]
                 })
 
@@ -279,49 +279,78 @@ if st.button("Evaluate Writing"):
             # Error details in expandable sections
             if grammar_count > 0:
                 with st.expander(f"Grammar Errors ({grammar_count})"):
+                    # Grammar errors
                     for e in lang.get("grammar_errors", []):
-                        orig = e.get("original", "")
-                        sug = e.get("corrected", "")
-                        if orig is not None and sug is not None:
-                            st.write(f"• '{orig}' → '{sug}'")
+                        span = e.get("span", {})
+                        if span and span.get("start") is not None and span.get("end") is not None:
+                            orig_text = lang.get("original", summary)
+                            orig = orig_text[span["start"]:span["end"]]
+                            sug = e.get("corrected", "")
+                            msg = e.get("message", "Grammar issue")
+                            st.write(f"• Position {span['start']}-{span['end']}: '{orig}' → '{sug}' ({msg})")
                         else:
-                            st.write(f"• {e.get('message', e.get('type', 'Grammar issue'))}")
-                    
-                    for m in lang.get("mechanics_errors", []):
-                        if isinstance(m, dict):
-                            orig = lang.get("original", summary)[m.get("span", {}).get("start", 0):m.get("span", {}).get("end", 0)] if m.get("span") else ""
-                            sug = m.get("corrected", "")
+                            orig = e.get("original", "")
+                            sug = e.get("corrected", "")
                             if orig and sug:
                                 st.write(f"• '{orig}' → '{sug}'")
+                            else:
+                                st.write(f"• {e.get('message', e.get('type', 'Grammar issue'))}")
+                    
+                    # Mechanics errors
+                    for m in lang.get("mechanics_errors", []):
+                        if isinstance(m, dict):
+                            span = m.get("span", {})
+                            if span and span.get("start") is not None and span.get("end") is not None:
+                                sug = m.get("corrected", "")
+                                msg = m.get("message", "Mechanics issue")
+                                # For insertion errors (start == end), just show the insertion
+                                if span["start"] == span["end"]:
+                                    st.write(f"• Position {span['start']}: Insert '{sug}' ({msg})")
+                                else:
+                                    orig_text = lang.get("original", summary)
+                                    orig = orig_text[span["start"]:span["end"]]
+                                    st.write(f"• Position {span['start']}-{span['end']}: Replace '{orig}' with '{sug}' ({msg})")
                             else:
                                 st.write(f"• {m.get('message', m.get('type', 'Mechanics issue'))}")
             
             if spelling_count > 0:
                 with st.expander(f"Spelling Errors ({spelling_count})"):
                     for w in lang.get("spelling_errors", []):
-                        orig = w.get("original", "")
-                        sug = w.get("corrected", "")
-                        if orig and sug and sug != orig:
-                            st.write(f"• '{orig}' → '{sug}'")
+                        span = w.get("span", {})
+                        if span and span.get("start") is not None and span.get("end") is not None:
+                            orig_text = lang.get("original", summary)
+                            orig = orig_text[span["start"]:span["end"]]
+                            sug = w.get("corrected", "")
+                            st.write(f"• Position {span['start']}-{span['end']}: '{orig}' → '{sug}'")
                         else:
-                            st.write(f"• {orig}")
+                            orig = w.get("original", "")
+                            sug = w.get("corrected", "")
+                            if orig and sug and sug != orig:
+                                st.write(f"• '{orig}' → '{sug}'")
+                            else:
+                                st.write(f"• {orig}")
             
             if spacing_count > 0:
                 with st.expander(f"Spacing Errors ({spacing_count})"):
                     for e in lang.get("extra_space_errors", []):
-                        orig = e.get("original", "")
-                        sug = e.get("corrected", "")
-                        st.write(f"• '{orig}' → '{sug}'")
+                        span = e.get("span", {})
+                        if span and span.get("start") is not None and span.get("end") is not None:
+                            orig = e.get("original", "")
+                            sug = e.get("corrected", "")
+                            st.write(f"• Position {span['start']}-{span['end']}: '{orig}' → '{sug}'")
+                        else:
+                            orig = e.get("original", "")
+                            sug = e.get("corrected", "")
+                            st.write(f"• '{orig}' → '{sug}'")
             
             if vocab_count > 0:
                 with st.expander(f"Vocabulary Suggestions ({vocab_count})"):
                     for diff in lang.get("diffs", []):
                         orig_span = diff.get("orig_span")
-                        if orig_span:
+                        if orig_span and len(orig_span) >= 2:
                             orig = lang.get("original", summary)[orig_span[0]:orig_span[1]]
                             sug = diff.get("corrected", "")
-                            if orig and sug:
-                                st.write(f"• '{orig}' → '{sug}'")
+                            st.write(f"• Position {orig_span[0]}-{orig_span[1]}: '{orig}' → '{sug}'")
 
             # Vocabulary insights
             vocab_data = lang.get("vocabulary", {})
