@@ -27,7 +27,7 @@ summary = st.text_area(
 # -----------------------------
 # Highlighting function
 # -----------------------------
-def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spelling_errors, diffs):
+def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spelling_errors, extra_space_errors, diffs):
     """Enhanced highlighting with better tooltips and error handling"""
     all_spans = []
 
@@ -70,6 +70,19 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
                 "message": "Spelling error",
                 "suggestion": word_info.get("corrected", ""),
                 "original": word_info.get("original", original_text[span["start"]:span["end"]])
+            })
+
+    # Extra space errors
+    for error in extra_space_errors:
+        span = error.get("span")
+        if span and span.get("start") < span.get("end"):
+            all_spans.append({
+                "start": span["start"],
+                "end": span["end"],
+                "type": "spacing",
+                "message": "Extra space",
+                "suggestion": error.get("corrected", ""),
+                "original": error.get("original", original_text[span["start"]:span["end"]])
             })
 
     # Track covered positions
@@ -131,6 +144,9 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
         elif sp["type"] == "spelling":
             color = "#ff9800"
             bg = "#ffe6cc"
+        elif sp["type"] == "spacing":
+            color = "#9c27b0"
+            bg = "#f3e5f5"
         else:  # vocabulary
             color = "#555"
             bg = "#fff2cc"
@@ -225,6 +241,7 @@ if st.button("Evaluate Writing"):
                 lang.get("grammar_errors", []),
                 lang.get("mechanics_errors", []),
                 lang.get("spelling_errors", []),
+                lang.get("extra_space_errors", []),
                 lang.get("diffs", [])
             )
 
@@ -249,13 +266,15 @@ if st.button("Evaluate Writing"):
             # Error counts
             grammar_count = len(lang.get('grammar_errors', [])) + len(lang.get('mechanics_errors', []))
             spelling_count = len(lang.get('spelling_errors', []))
+            spacing_count = len(lang.get('extra_space_errors', []))
             vocab_count = len(lang.get('diffs', []))
             
             st.markdown("### Error Counts")
             st.write(f"🔴 Grammar: {grammar_count}")
             st.write(f"🟠 Spelling: {spelling_count}")
+            st.write(f"🟣 Spacing: {spacing_count}")
             st.write(f"🟡 Vocabulary: {vocab_count}")
-            st.write(f"**Total: {grammar_count + spelling_count + vocab_count}**")
+            st.write(f"**Total: {grammar_count + spelling_count + spacing_count + vocab_count}**")
 
             # Error details in expandable sections
             if grammar_count > 0:
@@ -271,7 +290,7 @@ if st.button("Evaluate Writing"):
                     for m in lang.get("mechanics_errors", []):
                         if isinstance(m, dict):
                             orig = lang.get("original", summary)[m.get("span", {}).get("start", 0):m.get("span", {}).get("end", 0)] if m.get("span") else ""
-                            sug = m.get("suggestion", "")
+                            sug = m.get("corrected", "")
                             if orig and sug:
                                 st.write(f"• '{orig}' → '{sug}'")
                             else:
@@ -286,6 +305,13 @@ if st.button("Evaluate Writing"):
                             st.write(f"• '{orig}' → '{sug}'")
                         else:
                             st.write(f"• {orig}")
+            
+            if spacing_count > 0:
+                with st.expander(f"Spacing Errors ({spacing_count})"):
+                    for e in lang.get("extra_space_errors", []):
+                        orig = e.get("original", "")
+                        sug = e.get("corrected", "")
+                        st.write(f"• '{orig}' → '{sug}'")
             
             if vocab_count > 0:
                 with st.expander(f"Vocabulary Suggestions ({vocab_count})"):
