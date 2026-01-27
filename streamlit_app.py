@@ -28,20 +28,24 @@ summary = st.text_area(
 # Highlighting function
 # -----------------------------
 def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spelling_errors, diffs):
+    """Enhanced highlighting with better tooltips and error handling"""
     all_spans = []
 
+    # Grammar errors
     for error in grammar_errors:
         span = error.get("span")
         if span and span.get("start") is not None and span.get("end") is not None:
-            if span["start"] < span["end"]:
+            if span["start"] <= span["end"]:  # Include empty spans (insertions)
                 all_spans.append({
                     "start": span["start"],
                     "end": span["end"],
                     "type": "grammar",
-                    "message": error.get("message", error.get("type", "")),
-                    "suggestion": error.get("suggestion", "")
+                    "message": error.get("message", error.get("type", "Grammar issue")),
+                    "suggestion": error.get("corrected", ""),
+                    "original": original_text[span["start"]:span["end"]]
                 })
 
+    # Mechanics errors (treat as grammar)
     for error in mechanics_errors:
         if isinstance(error, dict) and error.get("span"):
             span = error.get("span")
@@ -50,10 +54,12 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
                     "start": span["start"],
                     "end": span["end"],
                     "type": "grammar",
-                    "message": error.get("message", error.get("type", "")),
-                    "suggestion": error.get("suggestion", "")
+                    "message": error.get("message", error.get("type", "Mechanics issue")),
+                    "suggestion": error.get("suggestion", ""),
+                    "original": original_text[span["start"]:span["end"]]
                 })
 
+    # Spelling errors
     for word_info in spelling_errors:
         span = word_info.get("span")
         if span and span.get("start") < span.get("end"):
@@ -61,15 +67,18 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
                 "start": span["start"],
                 "end": span["end"],
                 "type": "spelling",
-                "message": f"Spelling: {word_info.get('original','')}",
-                "suggestion": word_info.get("corrected", "")
+                "message": "Spelling error",
+                "suggestion": word_info.get("corrected", ""),
+                "original": word_info.get("original", original_text[span["start"]:span["end"]])
             })
 
+    # Track covered positions
     grammar_spelling_spans = set()
     for sp in all_spans:
         for i in range(sp["start"], sp["end"]):
             grammar_spelling_spans.add(i)
 
+    # LLM diffs (vocabulary/style suggestions)
     for diff in diffs:
         orig_span = diff.get("orig_span")
         if not orig_span or orig_span[0] >= orig_span[1]:
@@ -83,11 +92,13 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
         all_spans.append({
             "start": start,
             "end": end,
-            "type": "llm_diff",
-            "message": f"Suggestion",
-            "suggestion": corrected
+            "type": "vocabulary",
+            "message": "Style suggestion",
+            "suggestion": corrected,
+            "original": original_text[start:end]
         })
 
+    # Remove overlapping spans (prioritize by type and length)
     all_spans.sort(key=lambda x: (x["start"], -(x["end"] - x["start"])))
     filtered = []
     covered = set()
@@ -99,30 +110,44 @@ def build_highlighted_html(original_text, grammar_errors, mechanics_errors, spel
         for i in range(sp["start"], sp["end"]):
             covered.add(i)
 
+    # Apply highlighting (reverse order to maintain indices)
     filtered.sort(key=lambda x: x["start"], reverse=True)
     html = original_text
 
     for sp in filtered:
+        # Handle empty spans (insertions)
+        if sp["start"] == sp["end"]:
+            text_chunk = ""
+            marker = f'<span style="background:#ffd6d6; padding:2px 4px; border-radius:4px; border-bottom:2px solid red; color:red;" title="{sp.get("suggestion", sp["message"])}" style="cursor:help;">⇧{sp.get("suggestion", "")}</span>'
+            html = html[:sp["start"]] + marker + html[sp["start"]:]
+            continue
+
         text_chunk = original_text[sp["start"]:sp["end"]]
 
+        # Color coding
         if sp["type"] == "grammar":
-            style = "background:#ffd6d6;padding:2px 4px;border-radius:4px;border-bottom:2px solid red;"
+            color = "red"
+            bg = "#ffd6d6"
         elif sp["type"] == "spelling":
-            style = "background:#ffe6cc;padding:2px 4px;border-radius:4px;border-bottom:2px solid #ff9800;"
-        else:
-            style = "background:#fff2cc;padding:2px 4px;border-radius:4px;border-bottom:2px dotted #555;"
+            color = "#ff9800"
+            bg = "#ffe6cc"
+        else:  # vocabulary
+            color = "#555"
+            bg = "#fff2cc"
 
-        title = sp["message"]
-        if sp.get("suggestion"):
-            title += f" → {sp['suggestion']}"
+        # Build tooltip
+        title = sp["suggestion"] if sp.get("suggestion") else sp["message"]
+        title = title.replace('"', '&quot;')  # Escape quotes
 
-        html = (
-            html[:sp["start"]] +
-            f"<span style='{style}' title='{title}'>{text_chunk}</span>" +
-            html[sp["end"]:]
+        marked = (
+            f'<span style="background:{bg}; padding:2px 4px;'
+            f'border-radius:4px; border-bottom:2px solid {color};" '
+            f'title="{title}">{text_chunk}</span>'
         )
 
-    return html
+        html = html[:sp["start"]] + marked + html[sp["end"]:]
+
+    return html, filtered
 
 
 # -----------------------------
@@ -193,9 +218,9 @@ if st.button("Evaluate Writing"):
         col1, col2 = st.columns([2, 1])
 
         with col1:
-            st.markdown("**Highlighted Summary**")
+            st.subheader("📄 Summary (Highlighted)")
 
-            html = build_highlighted_html(
+            html, all_errors = build_highlighted_html(
                 lang.get("original", summary),
                 lang.get("grammar_errors", []),
                 lang.get("mechanics_errors", []),
@@ -209,54 +234,79 @@ if st.button("Evaluate Writing"):
             )
 
             if lang.get("corrected"):
-                st.markdown("**Corrected Version**")
-                st.success(lang["corrected"])
+                st.subheader("✅ Corrected Summary")
+                st.info(lang["corrected"])
 
         with col2:
+            st.subheader("📊 Language Scores")
+            
             scores = lang.get("scores", {})
             s1, s2, s3 = st.columns(3)
             s1.metric("Grammar", f"{scores.get('grammar', 0)}%")
             s2.metric("Spelling", f"{scores.get('spelling', 0)}%")
             s3.metric("Vocabulary", f"{scores.get('vocabulary', 0)}%")
 
+            # Error counts
+            grammar_count = len(lang.get('grammar_errors', [])) + len(lang.get('mechanics_errors', []))
+            spelling_count = len(lang.get('spelling_errors', []))
+            vocab_count = len(lang.get('diffs', []))
+            
+            st.markdown("### Error Counts")
+            st.write(f"🔴 Grammar: {grammar_count}")
+            st.write(f"🟠 Spelling: {spelling_count}")
+            st.write(f"🟡 Vocabulary: {vocab_count}")
+            st.write(f"**Total: {grammar_count + spelling_count + vocab_count}**")
+
+            # Error details in expandable sections
+            if grammar_count > 0:
+                with st.expander(f"Grammar Errors ({grammar_count})"):
+                    for e in lang.get("grammar_errors", []):
+                        orig = e.get("original", "")
+                        sug = e.get("corrected", "")
+                        if orig is not None and sug is not None:
+                            st.write(f"• '{orig}' → '{sug}'")
+                        else:
+                            st.write(f"• {e.get('message', e.get('type', 'Grammar issue'))}")
+                    
+                    for m in lang.get("mechanics_errors", []):
+                        if isinstance(m, dict):
+                            orig = lang.get("original", summary)[m.get("span", {}).get("start", 0):m.get("span", {}).get("end", 0)] if m.get("span") else ""
+                            sug = m.get("suggestion", "")
+                            if orig and sug:
+                                st.write(f"• '{orig}' → '{sug}'")
+                            else:
+                                st.write(f"• {m.get('message', m.get('type', 'Mechanics issue'))}")
+            
+            if spelling_count > 0:
+                with st.expander(f"Spelling Errors ({spelling_count})"):
+                    for w in lang.get("spelling_errors", []):
+                        orig = w.get("original", "")
+                        sug = w.get("corrected", "")
+                        if orig and sug and sug != orig:
+                            st.write(f"• '{orig}' → '{sug}'")
+                        else:
+                            st.write(f"• {orig}")
+            
+            if vocab_count > 0:
+                with st.expander(f"Vocabulary Suggestions ({vocab_count})"):
+                    for diff in lang.get("diffs", []):
+                        orig_span = diff.get("orig_span")
+                        if orig_span:
+                            orig = lang.get("original", summary)[orig_span[0]:orig_span[1]]
+                            sug = diff.get("corrected", "")
+                            if orig and sug:
+                                st.write(f"• '{orig}' → '{sug}'")
+
+            # Vocabulary insights
             vocab_data = lang.get("vocabulary", {})
             if vocab_data.get("insights"):
-                st.markdown("### Vocabulary Insights")
-                for i in vocab_data["insights"]:
-                    st.info(i)
+                st.markdown("### Vocabulary Feedback")
+                for insight in vocab_data["insights"]:
+                    st.info(insight)
 
-            if lang.get("grammar_errors"):
-                st.markdown("### Grammar Errors")
-                for e in lang["grammar_errors"]:
-                    msg = e.get("message", e.get("type"))
-                    sug = e.get("suggestion", "")
-                    if sug:
-                        st.error(f"{msg} → {sug}")
-                    else:
-                        st.error(msg)
-
-            if lang.get("mechanics_errors"):
-                st.markdown("### Mechanics")
-                for m in lang["mechanics_errors"]:
-                    if isinstance(m, dict):
-                        msg = m.get("message", m.get("type"))
-                        sug = m.get("suggestion", "")
-                        if sug:
-                            st.warning(f"{msg} → {sug}")
-                        else:
-                            st.warning(msg)
-                    else:
-                        st.warning(m)
-
-            if lang.get("spelling_errors"):
-                st.markdown("### Spelling")
-                for w in lang["spelling_errors"]:
-                    word = w.get("original", "")
-                    sug = w.get("corrected", "")
-                    if sug and sug != word:
-                        st.error(f"{word} → {sug}")
-                    else:
-                        st.error(word)
+        # Raw JSON view
+        with st.expander("🔍 Raw JSON Response"):
+            st.json(data)
 
         with st.expander("🔍 Raw JSON"):
             st.json(data)
