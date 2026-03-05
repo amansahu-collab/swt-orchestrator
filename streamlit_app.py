@@ -12,7 +12,7 @@ st.title("📝 Writing Evaluation Orchestrator")
 # Test type selector
 test_type = st.selectbox(
     "Select Test Type",
-    ["summarize_written_text", "summarize_spoken_text"],
+    ["summarize_spoken_text", "summarize_written_text"],
     index=0
 )
 
