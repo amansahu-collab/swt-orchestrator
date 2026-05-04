@@ -8,7 +8,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 API_URL = "https://la-model-proofread.languageacademy.com.au/correct-text"
 TOKEN = "pte_lsahdpasdhfasdhfasuaosiudfg"
 
-st.set_page_config(page_title="Grammar Corrector", layout="wide", page_icon="✏️")
+st.set_page_config(page_title="Grammar Corrector v2", layout="wide", page_icon="✏️")
 
 st.markdown("""
 <style>
