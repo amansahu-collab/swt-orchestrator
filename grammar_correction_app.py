@@ -12,7 +12,7 @@ st.set_page_config(page_title="Grammar Corrector", layout="wide", page_icon="✏
 
 st.markdown("""
 <style>
-.correction-box { background-color: #f8f9fa; border-radius: 10px; padding: 1rem; border-left: 4px solid #28a745; }
+.correction-box { background-color: #cbd3da; border-radius: 10px; padding: 1rem; border-left: 4px solid #28a745; }
 .original-box   { background-color: #fff3cd; border-radius: 10px; padding: 1rem; border-left: 4px solid #ffc107; }
 .stats-card     { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem; border-radius: 10px; text-align: center; margin: 0.5rem 0; }
 </style>
