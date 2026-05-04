@@ -18,7 +18,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("✏️ Grammar Corrector")
+st.title("✏️ Grammar Corrector v2")
 
 text = st.text_area("Enter Your Text", height=200, placeholder="Type or paste your text here...")
 
