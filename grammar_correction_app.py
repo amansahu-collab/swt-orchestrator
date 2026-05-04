@@ -5,7 +5,7 @@ from difflib import SequenceMatcher
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-API_URL = "https://la-model-proofreading-staging.languageacademy.com.au/correct-text"
+API_URL = "https://la-model-proofread.languageacademy.com.au/correct-text"
 TOKEN = "pte_lsahdpasdhfasdhfasuaosiudfg"
 
 st.set_page_config(page_title="Grammar Corrector", layout="wide", page_icon="✏️")
