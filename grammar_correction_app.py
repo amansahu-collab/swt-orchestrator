@@ -5,20 +5,20 @@ from difflib import SequenceMatcher
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-API_URL = "https://la-model-proofreading-staging.languageacademy.com.au/correct-text"
+API_URL = "https://la-model-proofread.languageacademy.com.au/correct-text"
 TOKEN = "pte_lsahdpasdhfasdhfasuaosiudfg"
 
-st.set_page_config(page_title="Grammar Corrector", layout="wide", page_icon="✏️")
+st.set_page_config(page_title="Grammar Corrector v2", layout="wide", page_icon="✏️")
 
 st.markdown("""
 <style>
-.correction-box { background-color: #f8f9fa; border-radius: 10px; padding: 1rem; border-left: 4px solid #28a745; }
+.correction-box { background-color: #cbd3da; border-radius: 10px; padding: 1rem; border-left: 4px solid #28a745; }
 .original-box   { background-color: #fff3cd; border-radius: 10px; padding: 1rem; border-left: 4px solid #ffc107; }
 .stats-card     { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 1rem; border-radius: 10px; text-align: center; margin: 0.5rem 0; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("✏️ Grammar Corrector")
+st.title("✏️ Grammar Corrector v2")
 
 text = st.text_area("Enter Your Text", height=200, placeholder="Type or paste your text here...")
 
