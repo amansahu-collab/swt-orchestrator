@@ -327,7 +327,7 @@ def main():
     """, unsafe_allow_html=True)
 
     with st.expander("⚙️ Configuration", expanded=False):
-        api_url = st.text_input("API URL", value="https://la-model-proofreading-staging.languageacademy.com.au")
+        api_url = st.text_input("API URL", value="http://la-model-proofreading-staging.languageacademy.com.au/")
 
     api_token = "pte_lsahdpasdhfasdhfasuaosiudfg"
 
