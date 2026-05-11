@@ -308,8 +308,9 @@ def submit_essay_remark(essay_prompt: str, essay_text: str, scoring_response: di
         "token": token
     }
     headers = {"Content-Type": "application/json", "X-API-TOKEN": token}
+    remark_url = api_url.replace("https://", "http://")
     try:
-        response = requests.post(f"{api_url}/essay-remark", json=payload, headers=headers)
+        response = requests.post(f"{remark_url}/essay-remark", json=payload, headers=headers)
         response.raise_for_status()
         return response.json().get("id")
     except requests.exceptions.RequestException as e:
