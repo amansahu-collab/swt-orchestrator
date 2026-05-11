@@ -285,7 +285,7 @@ def display_feedback_section(result: Dict[Any, Any]):
 
 def call_essay_api(essay_prompt: str, essay_text: str, api_url: str, token: str) -> Dict[Any, Any]:
     payload = {"essay_prompt": essay_prompt, "essay_text": essay_text, "token": token}
-    headers = {"Content-Type": "application/json", "X-API-TOKEN": token}
+    headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(f"{api_url.rstrip('/')}/score-essay", json=payload, headers=headers)
         response.raise_for_status()
@@ -307,10 +307,9 @@ def submit_essay_remark(essay_prompt: str, essay_text: str, scoring_response: di
         "remark": remark,
         "token": token
     }
-    headers = {"Content-Type": "application/json", "X-API-TOKEN": token}
-    remark_url = api_url.rstrip('/').replace("https://", "http://")
+    headers = {"Content-Type": "application/json"}
     try:
-        response = requests.post(f"{remark_url}/essay-remark", json=payload, headers=headers)
+        response = requests.post(f"{api_url.rstrip('/')}/essay-remark", json=payload, headers=headers)
         response.raise_for_status()
         return response.json().get("id")
     except requests.exceptions.RequestException as e:
