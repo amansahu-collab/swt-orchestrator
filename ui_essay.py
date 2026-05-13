@@ -96,6 +96,10 @@ def submit_remark(prompt, text, scoring_response, expected_scores, remark):
         "expected_content_score": expected_scores.get("content"),
         "expected_structure_score": expected_scores.get("structure"),
         "expected_linguistic_score": expected_scores.get("linguistic_range"),
+        "expected_form_score": expected_scores.get("form"),
+        "expected_grammar_score": expected_scores.get("grammar"),
+        "expected_vocabulary_score": expected_scores.get("vocabulary"),
+        "expected_spelling_score": expected_scores.get("spelling"),
         "remark": remark,
         "token": TOKEN
     }
@@ -192,10 +196,14 @@ if st.session_state.get("essay_result"):
     st.markdown("### 📬 Submit Feedback")
     st.markdown("If you think the scores should be different, enter expected scores and a remark.")
 
-    rc1, rc2, rc3 = st.columns(3)
+    rc1, rc2, rc3, rc4, rc5, rc6, rc7 = st.columns(7)
     exp_content   = rc1.number_input("Content",    0, 6, int(rows[0][1] or 0), key="exp_content")
     exp_structure = rc2.number_input("Structure",  0, 6, int(rows[5][1] or 0), key="exp_structure")
     exp_ling      = rc3.number_input("Linguistic", 0, 6, int(rows[4][1] or 0), key="exp_ling")
+    exp_form      = rc4.number_input("Form",       0, 2, int(rows[1][1] or 0), key="exp_form")
+    exp_grammar   = rc5.number_input("Grammar",    0, 2, int(grammar_score or 0), key="exp_grammar")
+    exp_vocab     = rc6.number_input("Vocabulary", 0, 2, int(vocab_score or 0), key="exp_vocab")
+    exp_spelling  = rc7.number_input("Spelling",   0, 2, int(spelling_score or 0), key="exp_spelling")
 
     remark = st.text_area("Remark", placeholder="Explain why the scores should be different...")
 
@@ -205,6 +213,10 @@ if st.session_state.get("essay_result"):
                 "content": exp_content,
                 "structure": exp_structure,
                 "linguistic_range": exp_ling,
+                "form": exp_form,
+                "grammar": exp_grammar,
+                "vocabulary": exp_vocab,
+                "spelling": exp_spelling,
             }
             inserted_id = submit_remark(
                 st.session_state["essay_prompt"],
