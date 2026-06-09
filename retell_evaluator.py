@@ -21,7 +21,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-API_BASE = "https://la-model-proofread.languageacademy.com.au"
+API_BASE = "https://la-model-proofreading-staging.languageacademy.com.au"
 
 if 'retell_history' not in st.session_state:
     st.session_state.retell_history = []
@@ -69,7 +69,7 @@ if evaluate_btn:
                     f"{API_BASE}/retell",
                     headers={"accept": "application/json", "Content-Type": "application/json"},
                     json={"lecture_transcript": lecture_input, "student_transcript": student_input, "token": api_token},
-                    timeout=30,
+                    timeout=60  ,
                     verify=False
                 )
 
@@ -82,7 +82,10 @@ if evaluate_btn:
                     total_key_points = final_result.get('total_key_points', 0)
                     overall_relevancy_percentage = final_result.get('overall_relevancy_percentage', 0)
                     content_score = final_result.get('content_score', 0)
+                    content_score_90 = final_result.get('content_score_90', 0)
                     key_point_results = final_result.get('key_point_results', [])
+                    feedback_text = result.get('feedback', {}).get('feedback', '')
+                    agent3 = result.get('agent_3_feedback_generator', {}).get('output', {})
 
                     st.session_state.retell_history.append({
                         'timestamp': datetime.now().strftime("%H:%M:%S"),
@@ -116,6 +119,7 @@ if evaluate_btn:
 
                     with col_score2:
                         st.metric("Content Score", f"{content_score}/6")
+                        st.metric("Content Score (90)", f"{content_score_90}/90")
                         st.metric("Total Key Points", total_key_points)
                         st.metric("Overall Relevancy", f"{overall_relevancy_percentage}%")
                         if content_score >= 5:
@@ -124,6 +128,10 @@ if evaluate_btn:
                             st.warning("⚠️ Good Coverage")
                         else:
                             st.error("❌ Needs Improvement")
+
+                    if feedback_text:
+                        st.subheader("💬 Feedback")
+                        st.info(feedback_text)
 
                     st.divider()
                     tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Individual Coverage", "📊 Overall Analysis", "📚 Extracted Key Points", "🤖 Agent Details", "📄 Raw Data"])
@@ -186,13 +194,16 @@ if evaluate_btn:
                             st.write(f"{idx}. {point}")
 
                     with tab4:
-                        c1, c2 = st.columns(2)
+                        c1, c2, c3 = st.columns(3)
                         with c1:
                             st.subheader("Agent 1: Key Point Extractor")
                             st.json(agent1)
                         with c2:
-                            st.subheader("Agent 2: Relevancy Evaluator")
+                            st.subheader("Agent 2: Coverage Evaluator")
                             st.json(agent2)
+                        with c3:
+                            st.subheader("Agent 3: Feedback Generator")
+                            st.json(agent3)
 
                     with tab5:
                         st.subheader("Complete API Response")
