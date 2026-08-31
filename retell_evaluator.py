@@ -201,18 +201,18 @@ if evaluate_btn:
                     with col_score1:
                         fig = go.Figure(go.Indicator(
                             mode="gauge+number+delta",
-                            value=content_score,
+                            value=content_score_90,
                             domain={'x': [0, 1], 'y': [0, 1]},
-                            title={'text': "Content Score", 'font': {'size': 24}},
+                            title={'text': "Content Score (out of 90)", 'font': {'size': 24}},
                             gauge={
-                                'axis': {'range': [0, 6], 'tickwidth': 1},
+                                'axis': {'range': [0, 90], 'tickwidth': 1},
                                 'bar': {'color': "#667eea"},
                                 'steps': [
-                                    {'range': [0, 2], 'color': "#fee"},
-                                    {'range': [2, 4], 'color': "#ffe"},
-                                    {'range': [4, 6], 'color': "#efe"}
+                                    {'range': [0, 30], 'color': "#fee"},
+                                    {'range': [30, 60], 'color': "#ffe"},
+                                    {'range': [60, 90], 'color': "#efe"}
                                 ],
-                                'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 4}
+                                'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': 60}
                             }
                         ))
                         fig.update_layout(height=250, margin=dict(l=20, r=20, t=50, b=20))
