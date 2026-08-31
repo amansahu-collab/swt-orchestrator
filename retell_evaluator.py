@@ -1,8 +1,9 @@
 import streamlit as st
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 import plotly.graph_objects as go
 import urllib3
+from pymongo import MongoClient
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -22,9 +23,78 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 API_BASE = "https://la-model-proofreading-staging.languageacademy.com.au"
+TRANSCRIBE_API = "http://whisper-model-2057542621.ap-southeast-2.elb.amazonaws.com/api/v1/transcribe"
+TRANSCRIBE_TOKEN = "GtJvj921H861LS0EOvzyGp7fk"
+MONGO_URI = "mongodb+srv://amansahu_db_user:12121212qwqw@cluster0.4hzwf6o.mongodb.net/"
+MONGO_DB = "remark"
+MONGO_COLLECTION = "retell"
+
+
+@st.cache_resource
+def get_mongo_collection():
+    """Return the MongoDB collection used to store retell reports.
+
+    The mongodb+srv URI needs a DNS SRV lookup. Some machines' default DNS
+    resolvers can't answer SRV queries, so we fall back to public DNS servers.
+    """
+    try:
+        import dns.resolver
+        dns.resolver.default_resolver = dns.resolver.Resolver(configure=True)
+        # Add public DNS servers as fallbacks for SRV/TXT resolution
+        existing = list(dns.resolver.default_resolver.nameservers)
+        for ns in ("8.8.8.8", "1.1.1.1"):
+            if ns not in existing:
+                existing.append(ns)
+        dns.resolver.default_resolver.nameservers = existing
+    except Exception:
+        pass
+
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
+    return client[MONGO_DB][MONGO_COLLECTION]
+
+
+def save_report(expected_marks, remark, retell_response):
+    """Persist a user-submitted report into MongoDB. Returns the inserted id."""
+    collection = get_mongo_collection()
+    document = {
+        "expected_marks": expected_marks,
+        "remark": remark,
+        "retell_response": retell_response,
+        "created_at": datetime.now(timezone.utc),
+    }
+    return collection.insert_one(document).inserted_id
+
+
+def transcribe_audio(audio_url, reference_text=""):
+    """Call the Whisper transcribe API and return the transcript text."""
+    response = requests.post(
+        TRANSCRIBE_API,
+        headers={
+            "accept": "application/json",
+            "x-token": TRANSCRIBE_TOKEN,
+            "Content-Type": "application/json",
+        },
+        json={"audio_url": audio_url, "reference_text": reference_text or "string"},
+        timeout=120,
+        verify=False,
+    )
+    response.raise_for_status()
+    result = response.json()
+    # API returns {"status": "success", "data": {"transcript": "...", ...}}
+    data = result.get("data", result) if isinstance(result, dict) else result
+    if isinstance(data, dict):
+        for key in ("transcript", "text", "transcription", "result"):
+            value = data.get(key)
+            if value:
+                return value if isinstance(value, str) else str(value)
+    return ""
 
 if 'retell_history' not in st.session_state:
     st.session_state.retell_history = []
+if 'last_retell_result' not in st.session_state:
+    st.session_state.last_retell_result = None
+if 'last_content_score_90' not in st.session_state:
+    st.session_state.last_content_score_90 = 0
 
 with st.sidebar:
     st.header("⚙️ Configuration")
@@ -53,18 +123,45 @@ with col1:
     lecture_input = st.text_area("", height=250, placeholder="Paste the original lecture transcript here...", key="lecture")
 with col2:
     st.subheader("🎤 Student Response")
-    student_input = st.text_area("", height=250, placeholder="Enter what the student said when retelling the lecture...", key="student")
+    input_mode = st.radio(
+        "Response input type",
+        ["Text", "Audio URL"],
+        horizontal=True,
+        key="student_input_mode",
+    )
+    if input_mode == "Text":
+        student_input = st.text_area("", height=210, placeholder="Enter what the student said when retelling the lecture...", key="student")
+        student_audio_url = ""
+    else:
+        student_audio_url = st.text_input(
+            "Audio URL",
+            placeholder="https://.../answer.wav",
+            key="student_audio_url",
+        )
+        st.caption("The audio will be transcribed automatically and used as the student response.")
+        student_input = ""
 
 _, col_btn, _ = st.columns([1, 1, 1])
 with col_btn:
     evaluate_btn = st.button("🚀 Evaluate Retell", use_container_width=True, type="primary")
 
 if evaluate_btn:
-    if not lecture_input or not student_input:
-        st.error("⚠️ Please provide both lecture transcript and student response.")
+    missing = not lecture_input or (input_mode == "Text" and not student_input) or (input_mode == "Audio URL" and not student_audio_url)
+    if missing:
+        st.error("⚠️ Please provide the lecture transcript and the student response (text or audio URL).")
     else:
-        with st.spinner("🔄 Analyzing retell performance..."):
-            try:
+        try:
+            if input_mode == "Audio URL":
+                with st.spinner("🎧 Transcribing student audio..."):
+                    student_input = transcribe_audio(student_audio_url, reference_text=lecture_input)
+                if not student_input or not student_input.strip():
+                    st.error("❌ Transcription returned no text. Please check the audio URL and try again.")
+                    st.stop()
+                st.success("✅ Audio transcribed successfully!")
+                with st.expander("📝 Transcribed Student Response", expanded=True):
+                    st.write(student_input)
+
+            with st.spinner("🔄 Analyzing retell performance..."):
                 response = requests.post(
                     f"{API_BASE}/retell",
                     headers={"accept": "application/json", "Content-Type": "application/json"},
@@ -92,6 +189,10 @@ if evaluate_btn:
                         'score': content_score,
                         'total_points': total_key_points
                     })
+
+                    # Persist the latest result so the report form survives reruns
+                    st.session_state.last_retell_result = result
+                    st.session_state.last_content_score_90 = content_score_90
 
                     st.success("✅ Retell evaluation completed successfully!")
                     st.divider()
@@ -216,12 +317,50 @@ if evaluate_btn:
                 else:
                     st.error(f"❌ Error {response.status_code}: {response.text}")
 
-            except requests.exceptions.Timeout:
-                st.error("⏱️ Request timed out. Please try again.")
-            except requests.exceptions.ConnectionError:
-                st.error("🔌 Connection failed.")
-            except Exception as e:
-                st.error(f"❌ Unexpected error: {str(e)}")
+        except requests.exceptions.Timeout:
+            st.error("⏱️ Request timed out. Please try again.")
+        except requests.exceptions.ConnectionError:
+            st.error("🔌 Connection failed.")
+        except Exception as e:
+            st.error(f"❌ Unexpected error: {str(e)}")
+
+# --- Report an incorrect result ---
+if st.session_state.last_retell_result is not None:
+    st.divider()
+    with st.expander("🚩 Report this result", expanded=False):
+        st.caption(
+            "If the score or feedback looks wrong, submit the marks you expected along with a remark. "
+            "This is stored for review together with the full evaluation response."
+        )
+        with st.form("report_form", clear_on_submit=True):
+            expected_marks = st.number_input(
+                "Expected marks (out of 90)",
+                min_value=0,
+                max_value=90,
+                value=int(st.session_state.last_content_score_90 or 0),
+                step=1,
+            )
+            remark = st.text_area(
+                "Remark",
+                placeholder="Explain what you think is incorrect about the score or feedback...",
+                height=120,
+            )
+            submit_report = st.form_submit_button("📤 Submit Report", type="primary", use_container_width=True)
+
+        if submit_report:
+            if not remark or not remark.strip():
+                st.warning("⚠️ Please add a remark describing the issue before submitting.")
+            else:
+                try:
+                    with st.spinner("💾 Submitting report..."):
+                        report_id = save_report(
+                            expected_marks=int(expected_marks),
+                            remark=remark.strip(),
+                            retell_response=st.session_state.last_retell_result,
+                        )
+                    st.success(f"✅ Report submitted successfully! Reference ID: {report_id}")
+                except Exception as e:
+                    st.error(f"❌ Failed to submit report: {str(e)}")
 
 st.divider()
 st.caption("💡 Tip: Use the sidebar to view your evaluation history and configure the API token")
