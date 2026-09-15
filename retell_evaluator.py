@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import plotly.graph_objects as go
 import urllib3
@@ -42,7 +43,7 @@ st.markdown("""
         border-left-color: #721c24;
     }
     .feedback-box {
-        background-color: #eef2ff;
+        background-color: #00000;
         border-left: 5px solid #667eea;
         padding: 16px 20px;
         border-radius: 8px;
@@ -439,8 +440,14 @@ if evaluate_btn:
                     st.write(student_input)
 
             with st.spinner("🔄 Analyzing retell performance (v1 + v2)..."):
-                status_v1, result_v1 = call_retell("retell", lecture_input, student_input, api_token)
-                status_v2, result_v2 = call_retell("retell-v2", lecture_input, student_input, api_token)
+                # Run both API versions in parallel. requests releases the GIL
+                # during network I/O, so threads give true concurrency here and
+                # cut the total wait to roughly max(v1, v2) instead of v1 + v2.
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    future_v1 = executor.submit(call_retell, "retell", lecture_input, student_input, api_token)
+                    future_v2 = executor.submit(call_retell, "retell-v2", lecture_input, student_input, api_token)
+                    status_v1, result_v1 = future_v1.result()
+                    status_v2, result_v2 = future_v2.result()
 
             # Handle failures for either version
             errors = []
