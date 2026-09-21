@@ -244,6 +244,37 @@ def _coverage_color(coverage):
 def render_score_summary(data, key_prefix):
     """Render the gauge + metrics + feedback for one version."""
     content_score_90 = data['content_score_90']
+    final_result = data['final_result']
+
+    # --- Response quality checks (shown up front) ---
+    word_count = final_result.get('word_count')
+    conclusion_marker_found = final_result.get('conclusion_marker_found')
+    short_response_penalty_applied = final_result.get('short_response_penalty_applied')
+
+    if word_count is not None or conclusion_marker_found is not None or short_response_penalty_applied is not None:
+        q1, q2, q3 = st.columns(3)
+        with q1:
+            wc_display = word_count if word_count is not None else "—"
+            st.metric("Word Count", wc_display)
+            if word_count is not None and word_count < 50:
+                st.caption("⚠️ Under 50 words — penalty applies")
+        with q2:
+            if conclusion_marker_found is True:
+                st.success("✅ Conclusion marker found")
+            elif conclusion_marker_found is False:
+                st.error("❌ No conclusion marker")
+            else:
+                st.info("Conclusion marker: —")
+        with q3:
+            if short_response_penalty_applied is True:
+                st.error("⚠️ Short-response penalty applied")
+            elif short_response_penalty_applied is False:
+                st.success("✅ No short-response penalty")
+            else:
+                st.info("Short-response penalty: —")
+        st.caption("ℹ️ Responses under 50 words are penalised.")
+        st.write("")
+
     col_score1, col_score2 = st.columns([3, 2])
 
     with col_score1:
