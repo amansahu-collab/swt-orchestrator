@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import plotly.graph_objects as go
 import urllib3
@@ -58,7 +57,6 @@ st.markdown("""
         font-size: 0.9rem;
         color: #fff;
     }
-    .v1-badge { background-color: #6c757d; }
     .v2-badge { background-color: #667eea; }
 </style>
 """, unsafe_allow_html=True)
@@ -105,8 +103,8 @@ def get_calls_collection():
     return _get_mongo_client()[MONGO_DB][MONGO_CALLS_COLLECTION]
 
 
-def save_call(lecture_transcript, student_transcript, student_audio_url, api_response_v1, api_response_v2):
-    """Persist every evaluation call (input + both outputs) into MongoDB.
+def save_call(lecture_transcript, student_transcript, student_audio_url, api_response_v2):
+    """Persist every evaluation call (input + output) into MongoDB.
 
     Failures here should never break the UI, so errors are swallowed and
     surfaced only as a return value.
@@ -119,7 +117,6 @@ def save_call(lecture_transcript, student_transcript, student_audio_url, api_res
                 "student_transcript": student_transcript,
                 "student_audio_url": student_audio_url,
             },
-            "output_v1": api_response_v1,
             "output_v2": api_response_v2,
             "created_at": datetime.now(timezone.utc),
         }
@@ -166,7 +163,7 @@ def transcribe_audio(audio_url, reference_text=""):
 
 
 def call_retell(endpoint, lecture_transcript, student_transcript, token):
-    """Call a retell endpoint (v1 = /retell, v2 = /retell-v2).
+    """Call the retell endpoint (v2 = /retell-v2).
 
     Returns (status_code, json_or_text). On non-200 the second element is the
     raw text so the caller can surface an error message.
@@ -242,7 +239,7 @@ def _coverage_color(coverage):
 
 
 def render_score_summary(data, key_prefix):
-    """Render the gauge + metrics + feedback for one version."""
+    """Render the gauge + metrics + feedback."""
     content_score_90 = data['content_score_90']
     final_result = data['final_result']
 
@@ -315,7 +312,7 @@ def render_score_summary(data, key_prefix):
 
 
 def render_key_point_matches(data):
-    """Render the Key Point Matches table for one version."""
+    """Render the Key Point Matches table."""
     student_key_point_matches = data['student_key_point_matches']
     if not student_key_point_matches:
         st.info("No key point match data available")
@@ -345,7 +342,7 @@ def render_key_point_matches(data):
 
 
 def render_key_points(data):
-    """Render extracted lecture + student key points for one version."""
+    """Render extracted lecture + student key points."""
     col_kp1, col_kp2 = st.columns(2)
     with col_kp1:
         st.markdown("**📚 Lecture Key Points**")
@@ -366,7 +363,7 @@ def render_key_points(data):
 
 
 def render_coverage(data):
-    """Render coverage per lecture key point for one version."""
+    """Render coverage per lecture key point."""
     key_point_results = data['key_point_results']
     if not key_point_results:
         st.info("No lecture key point coverage data available")
@@ -382,17 +379,6 @@ def render_coverage(data):
         with c2:
             st.markdown(f"<span style='color: {color}; font-weight: bold;'>{coverage}% - {status}</span>", unsafe_allow_html=True)
         st.markdown("---")
-
-
-def render_version_column(label, badge_class, data):
-    """Render a full result panel for one version inside a column."""
-    st.markdown(f'<span class="version-badge {badge_class}">{label}</span>', unsafe_allow_html=True)
-    st.write("")
-    render_score_summary(data, key_prefix=badge_class)
-    st.markdown("##### 🔗 Key Point Matches")
-    render_key_point_matches(data)
-    st.markdown("##### 📚 Extracted Key Points")
-    render_key_points(data)
 
 
 if 'retell_history' not in st.session_state:
@@ -411,9 +397,8 @@ with st.sidebar:
     if st.session_state.retell_history:
         for idx, item in enumerate(reversed(st.session_state.retell_history[-5:])):
             with st.expander(f"#{len(st.session_state.retell_history) - idx} - {item['timestamp']}"):
-                st.metric("V1 Score", f"{item.get('score_v1', 0)}/90")
-                st.metric("V2 Score", f"{item.get('score_v2', 0)}/90")
-                st.caption(f"V1 Key Points: {item.get('total_points_v1', 0)} | V2 Key Points: {item.get('total_points_v2', 0)}")
+                st.metric("Score", f"{item.get('score', 0)}/90")
+                st.caption(f"Key Points: {item.get('total_points', 0)}")
     else:
         st.info("No evaluations yet")
 
@@ -422,7 +407,7 @@ with st.sidebar:
         st.rerun()
 
 st.markdown('<h1 class="main-header">🎓 Retell Lecture Evaluator</h1>', unsafe_allow_html=True)
-st.markdown("Evaluate a student's retell against **both** API versions (v1 and v2) side by side to compare key points and key point matches.")
+st.markdown("Evaluate a student's retell against the API to review key points and key point matches.")
 
 col1, col2 = st.columns(2)
 
@@ -452,7 +437,7 @@ with col2:
 
 col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
 with col_btn2:
-    evaluate_btn = st.button("🚀 Evaluate Retell (v1 + v2)", use_container_width=True, type="primary")
+    evaluate_btn = st.button("🚀 Evaluate Retell", use_container_width=True, type="primary")
 
 if evaluate_btn:
     missing = not lecture_input or (input_mode == "Text" and not student_input) or (input_mode == "Audio URL" and not student_audio_url)
@@ -470,61 +455,40 @@ if evaluate_btn:
                 with st.expander("📝 Transcribed Student Response", expanded=True):
                     st.write(student_input)
 
-            with st.spinner("🔄 Analyzing retell performance (v1 + v2)..."):
-                # Run both API versions in parallel. requests releases the GIL
-                # during network I/O, so threads give true concurrency here and
-                # cut the total wait to roughly max(v1, v2) instead of v1 + v2.
-                with ThreadPoolExecutor(max_workers=2) as executor:
-                    future_v1 = executor.submit(call_retell, "retell", lecture_input, student_input, api_token)
-                    future_v2 = executor.submit(call_retell, "retell-v2", lecture_input, student_input, api_token)
-                    status_v1, result_v1 = future_v1.result()
-                    status_v2, result_v2 = future_v2.result()
+            with st.spinner("🔄 Analyzing retell performance..."):
+                status_v2, result_v2 = call_retell("retell-v2", lecture_input, student_input, api_token)
 
-            # Handle failures for either version
-            errors = []
-            for label, status, body in (("v1 (/retell)", status_v1, result_v1), ("v2 (/retell-v2)", status_v2, result_v2)):
-                if status != 200:
-                    if status == 401:
-                        errors.append(f"🔒 {label}: Authentication failed. Please check your API token.")
-                    elif status == 404:
-                        errors.append(f"🔍 {label}: API endpoint not found.")
-                    else:
-                        errors.append(f"❌ {label}: Error {status}: {body}")
+            # Handle failure
+            if status_v2 != 200:
+                if status_v2 == 401:
+                    st.error("🔒 Authentication failed. Please check your API token.")
+                elif status_v2 == 404:
+                    st.error("🔍 API endpoint not found.")
+                else:
+                    st.error(f"❌ Error {status_v2}: {result_v2}")
+            else:
+                data_v2 = parse_retell_result(result_v2, lecture_input, student_input)
 
-            if errors:
-                for e in errors:
-                    st.error(e)
-
-            if status_v1 == 200 or status_v2 == 200:
-                data_v1 = parse_retell_result(result_v1, lecture_input, student_input) if status_v1 == 200 else None
-                data_v2 = parse_retell_result(result_v2, lecture_input, student_input) if status_v2 == 200 else None
-
-                # Log the call (both outputs) to MongoDB
+                # Log the call to MongoDB
                 call_id = save_call(
                     lecture_transcript=lecture_input,
                     student_transcript=student_input,
                     student_audio_url=student_audio_url,
-                    api_response_v1=result_v1 if status_v1 == 200 else {"error": result_v1, "status": status_v1},
-                    api_response_v2=result_v2 if status_v2 == 200 else {"error": result_v2, "status": status_v2},
+                    api_response_v2=result_v2,
                 )
 
                 st.session_state.retell_history.append({
                     'timestamp': datetime.now().strftime("%H:%M:%S"),
-                    'score_v1': data_v1['content_score_90'] if data_v1 else 0,
-                    'score_v2': data_v2['content_score_90'] if data_v2 else 0,
-                    'total_points_v1': data_v1['total_key_points'] if data_v1 else 0,
-                    'total_points_v2': data_v2['total_key_points'] if data_v2 else 0,
+                    'score': data_v2['content_score_90'],
+                    'total_points': data_v2['total_key_points'],
                 })
 
-                # Keep the report feature pointing at v2 (latest) if available, else v1
-                primary = data_v2 or data_v1
                 st.session_state.last_retell_response = {
-                    "v1": data_v1['complete_result'] if data_v1 else None,
-                    "v2": data_v2['complete_result'] if data_v2 else None,
+                    "v2": data_v2['complete_result'],
                 }
-                st.session_state.last_content_score_90 = primary['content_score_90']
+                st.session_state.last_content_score_90 = data_v2['content_score_90']
 
-                st.success("✅ Retell evaluation completed (v1 + v2)!")
+                st.success("✅ Retell evaluation completed!")
                 if isinstance(call_id, str) and call_id.startswith("ERROR:"):
                     st.warning(f"⚠️ Could not log this call to MongoDB: {call_id[7:].strip()}")
                 else:
@@ -532,103 +496,37 @@ if evaluate_btn:
 
                 st.divider()
 
-                # Quick comparison of headline scores
-                st.subheader("⚖️ Version Comparison")
-                cmp1, cmp2, cmp3 = st.columns(3)
-                v1_score = data_v1['content_score_90'] if data_v1 else None
-                v2_score = data_v2['content_score_90'] if data_v2 else None
-                with cmp1:
-                    st.metric("V1 Content Score", f"{v1_score}/90" if v1_score is not None else "—")
-                with cmp2:
-                    delta = (v2_score - v1_score) if (v1_score is not None and v2_score is not None) else None
-                    st.metric(
-                        "V2 Content Score",
-                        f"{v2_score}/90" if v2_score is not None else "—",
-                        delta=f"{delta:+g} vs v1" if delta is not None else None,
-                    )
-                with cmp3:
-                    v1_kp = data_v1['total_key_points'] if data_v1 else None
-                    v2_kp = data_v2['total_key_points'] if data_v2 else None
-                    st.metric("Lecture Key Points (V1 / V2)", f"{v1_kp} / {v2_kp}")
+                # Full result panel
+                render_score_summary(data_v2, key_prefix="v2")
+                st.markdown("##### 🔗 Key Point Matches")
+                render_key_point_matches(data_v2)
+                st.markdown("##### 📚 Extracted Key Points")
+                render_key_points(data_v2)
 
                 st.divider()
 
-                # Side-by-side full panels
-                col_v1, col_v2 = st.columns(2)
-                with col_v1:
-                    if data_v1:
-                        render_version_column("Version 1 · /retell", "v1-badge", data_v1)
-                    else:
-                        st.error("Version 1 failed — see error above.")
-                with col_v2:
-                    if data_v2:
-                        render_version_column("Version 2 · /retell-v2", "v2-badge", data_v2)
-                    else:
-                        st.error("Version 2 failed — see error above.")
-
-                st.divider()
-
-                # Detailed comparison tabs
+                # Detailed tabs
                 tab_cov, tab_agent, tab_raw = st.tabs([
-                    "📊 Coverage Comparison",
+                    "📊 Coverage",
                     "🤖 Agent Details",
                     "📄 Raw Data",
                 ])
 
                 with tab_cov:
-                    cc1, cc2 = st.columns(2)
-                    with cc1:
-                        st.markdown('<span class="version-badge v1-badge">Version 1</span>', unsafe_allow_html=True)
-                        st.write("")
-                        if data_v1:
-                            render_coverage(data_v1)
-                        else:
-                            st.info("No V1 data")
-                    with cc2:
-                        st.markdown('<span class="version-badge v2-badge">Version 2</span>', unsafe_allow_html=True)
-                        st.write("")
-                        if data_v2:
-                            render_coverage(data_v2)
-                        else:
-                            st.info("No V2 data")
+                    render_coverage(data_v2)
 
                 with tab_agent:
-                    ac1, ac2 = st.columns(2)
-                    with ac1:
-                        st.markdown('<span class="version-badge v1-badge">Version 1</span>', unsafe_allow_html=True)
-                        if data_v1:
-                            st.markdown("**Agent 1 — Lecture Output**")
-                            st.json(data_v1['lecture_kp_output'])
-                            st.markdown("**Agent 1 — Student Output**")
-                            st.json(data_v1['student_kp_output'])
-                            st.markdown("**Agent 2 — Coverage Evaluator**")
-                            st.json(data_v1['agent2'])
-                            st.markdown("**Agent 3 — Feedback**")
-                            st.json(data_v1['feedback_obj'])
-                        else:
-                            st.info("No V1 data")
-                    with ac2:
-                        st.markdown('<span class="version-badge v2-badge">Version 2</span>', unsafe_allow_html=True)
-                        if data_v2:
-                            st.markdown("**Agent 1 — Lecture Output**")
-                            st.json(data_v2['lecture_kp_output'])
-                            st.markdown("**Agent 1 — Student Output**")
-                            st.json(data_v2['student_kp_output'])
-                            st.markdown("**Agent 2 — Coverage Evaluator**")
-                            st.json(data_v2['agent2'])
-                            st.markdown("**Agent 3 — Feedback**")
-                            st.json(data_v2['feedback_obj'])
-                        else:
-                            st.info("No V2 data")
+                    st.markdown("**Agent 1 — Lecture Output**")
+                    st.json(data_v2['lecture_kp_output'])
+                    st.markdown("**Agent 1 — Student Output**")
+                    st.json(data_v2['student_kp_output'])
+                    st.markdown("**Agent 2 — Coverage Evaluator**")
+                    st.json(data_v2['agent2'])
+                    st.markdown("**Agent 3 — Feedback**")
+                    st.json(data_v2['feedback_obj'])
 
                 with tab_raw:
-                    rc1, rc2 = st.columns(2)
-                    with rc1:
-                        st.markdown('<span class="version-badge v1-badge">Version 1</span>', unsafe_allow_html=True)
-                        st.json(data_v1['complete_result'] if data_v1 else {"error": result_v1})
-                    with rc2:
-                        st.markdown('<span class="version-badge v2-badge">Version 2</span>', unsafe_allow_html=True)
-                        st.json(data_v2['complete_result'] if data_v2 else {"error": result_v2})
+                    st.json(data_v2['complete_result'])
 
         except requests.exceptions.Timeout:
             st.error("⏱️ Request timed out. Please try again.")
@@ -643,7 +541,7 @@ if st.session_state.last_retell_response is not None:
     with st.expander("🚩 Report this result", expanded=False):
         st.caption(
             "If the score or feedback looks wrong, submit the marks you expected along with a remark. "
-            "This is stored for review together with the full evaluation response (both v1 and v2)."
+            "This is stored for review together with the full evaluation response."
         )
         with st.form("report_form", clear_on_submit=True):
             expected_marks = st.number_input(
@@ -676,4 +574,4 @@ if st.session_state.last_retell_response is not None:
                     st.error(f"❌ Failed to submit report: {str(e)}")
 
 st.divider()
-st.caption("💡 Tip: Each evaluation now calls both /retell (v1) and /retell-v2 so you can compare key points and key point matches side by side.")
+st.caption("💡 Tip: Each evaluation calls /retell-v2 to review key points and key point matches.")
