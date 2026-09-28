@@ -456,7 +456,7 @@ if evaluate_btn:
                     st.write(student_input)
 
             with st.spinner("🔄 Analyzing retell performance..."):
-                status_v2, result_v2 = call_retell("retell-v2", lecture_input, student_input, api_token)
+                status_v2, result_v2 = call_retell("retell", lecture_input, student_input, api_token)
 
             # Handle failure
             if status_v2 != 200:
