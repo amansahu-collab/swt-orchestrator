@@ -24,6 +24,7 @@ st.markdown("""
         margin: 4px 0;
         border-radius: 6px;
         border-left: 4px solid;
+        color: #212529;
     }
     .covered {
         background-color: #d4edda;
@@ -362,6 +363,65 @@ def render_key_points(data):
             st.info("No student key points extracted")
 
 
+def _kp_idea(kp_result):
+    return kp_result.get('idea') or kp_result.get('key_point', '')
+
+
+def _kp_coverage(kp_result):
+    value = kp_result.get('coverage_percent')
+    if value is None:
+        value = kp_result.get('coverage_percentage', 0)
+    return value or 0
+
+
+def _kp_label(kp_result):
+    """Return 'covered', 'partial' or 'uncovered' for a key point result."""
+    label = (kp_result.get('label') or '').strip().lower()
+    if label.startswith('partial'):
+        return 'partial'
+    if label in ('covered', 'uncovered'):
+        return label
+    coverage = _kp_coverage(kp_result)
+    if coverage >= 80:
+        return 'covered'
+    if coverage > 0:
+        return 'partial'
+    return 'uncovered'
+
+
+def render_idea_coverage(data):
+    """Render covered / partially covered / uncovered lecture ideas."""
+    results = data['key_point_results']
+    if not results:
+        st.info("No covered/uncovered idea data available")
+        return
+
+    groups = {'covered': [], 'partial': [], 'uncovered': []}
+    for kp in results:
+        groups[_kp_label(kp)].append(kp)
+
+    st.subheader("💡 Ideas Coverage")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("✅ Covered", len(groups['covered']))
+    m2.metric("🟡 Partially Covered", len(groups['partial']))
+    m3.metric("❌ Uncovered", len(groups['uncovered']))
+
+    sections = (
+        ('covered', "✅ Covered Ideas", 'covered'),
+        ('partial', "🟡 Partially Covered Ideas", 'partial'),
+        ('uncovered', "❌ Uncovered Ideas", 'not-covered'),
+    )
+    for key, title, css in sections:
+        if not groups[key]:
+            continue
+        st.markdown(f"**{title}**")
+        for kp in groups[key]:
+            st.markdown(
+                f'<div class="key-point {css}">{_kp_idea(kp)} <b>({_kp_coverage(kp)}%)</b></div>',
+                unsafe_allow_html=True,
+            )
+
+
 def render_coverage(data):
     """Render coverage per lecture key point."""
     key_point_results = data['key_point_results']
@@ -369,8 +429,8 @@ def render_coverage(data):
         st.info("No lecture key point coverage data available")
         return
     for idx, kp_result in enumerate(key_point_results, 1):
-        coverage = kp_result.get('coverage_percentage', 0)
-        key_point = kp_result.get('key_point', '')
+        coverage = _kp_coverage(kp_result)
+        key_point = _kp_idea(kp_result)
         color, status = _coverage_color(coverage)
         st.markdown(f"**Key Point {idx}:** {key_point}")
         c1, c2 = st.columns([3, 1])
@@ -494,6 +554,10 @@ if evaluate_btn:
                 else:
                     st.caption(f"🗄️ Call logged to MongoDB (`{MONGO_DB}.{MONGO_CALLS_COLLECTION}`) — id: {call_id}")
 
+                st.divider()
+
+                # Covered / uncovered ideas first
+                render_idea_coverage(data_v2)
                 st.divider()
 
                 # Full result panel
