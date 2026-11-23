@@ -104,7 +104,7 @@ def get_calls_collection():
     return _get_mongo_client()[MONGO_DB][MONGO_CALLS_COLLECTION]
 
 
-def save_call(lecture_transcript, student_transcript, student_audio_url, api_response_v2):
+def save_call(lecture_transcript, student_transcript, student_audio_url, api_response):
     """Persist every evaluation call (input + output) into MongoDB.
 
     Failures here should never break the UI, so errors are swallowed and
@@ -118,12 +118,49 @@ def save_call(lecture_transcript, student_transcript, student_audio_url, api_res
                 "student_transcript": student_transcript,
                 "student_audio_url": student_audio_url,
             },
-            "output_v2": api_response_v2,
+            "output": api_response,
             "created_at": datetime.now(timezone.utc),
         }
         return collection.insert_one(document).inserted_id
     except Exception as e:
         return f"ERROR: {e}"
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def load_previous_calls(limit):
+    """Fetch the latest logged evaluation calls from MongoDB (newest first)."""
+    cursor = get_calls_collection().find().sort("created_at", -1).limit(int(limit))
+    calls = []
+    for doc in cursor:
+        doc["_id"] = str(doc["_id"])
+        calls.append(doc)
+    return calls
+
+
+def get_call_output(call):
+    """Return the stored API output of a logged call.
+
+    Older documents stored it under output_v2 / output_v1.
+    """
+    return call.get("output") or call.get("output_v2") or call.get("output_v1") or {}
+
+
+def _preview(text, length=60):
+    text = (text or "").replace("\n", " ").strip()
+    return text if len(text) <= length else text[:length].rstrip() + "…"
+
+
+def summarize_call(call):
+    """Short summary of a logged call for the history table."""
+    call_input = call.get("input", {}) or {}
+    output = get_call_output(call)
+    final_result = output.get("final_result", {}) if isinstance(output, dict) else {}
+    return {
+        "score": final_result.get("content_score_90", "—"),
+        "total_key_points": final_result.get("total_key_points", "—"),
+        "student_preview": _preview(call_input.get("student_transcript")),
+        "lecture_preview": _preview(call_input.get("lecture_transcript")),
+    }
 
 
 def save_report(expected_marks, remark, retell_response):
@@ -164,7 +201,7 @@ def transcribe_audio(audio_url, reference_text=""):
 
 
 def call_retell(endpoint, lecture_transcript, student_transcript, token):
-    """Call the retell endpoint (v2 = /retell-v2).
+    """Call a retell endpoint (e.g. /retell).
 
     Returns (status_code, json_or_text). On non-200 the second element is the
     raw text so the caller can surface an error message.
@@ -466,176 +503,265 @@ with st.sidebar:
         st.session_state.retell_history = []
         st.rerun()
 
+
 st.markdown('<h1 class="main-header">🎓 Retell Lecture Evaluator</h1>', unsafe_allow_html=True)
-st.markdown("Evaluate a student's retell against the API to review key points and key point matches.")
 
-col1, col2 = st.columns(2)
+tab_eval, tab_history = st.tabs(["🚀 Evaluate", "🗂️ Previous Tests"])
 
-with col1:
-    st.subheader("📚 Lecture Transcript")
-    lecture_input = st.text_area("", height=250, placeholder="Paste the original lecture transcript here...", key="lecture")
+# ---------------------------------------------------------------------------
+# Previous Tests tab (rendered first so an st.stop() in the Evaluate tab
+# cannot prevent it from showing)
+# ---------------------------------------------------------------------------
+with tab_history:
+    st.markdown("Browse earlier evaluations stored in MongoDB.")
+    h1, h2, h3 = st.columns([1, 1, 2])
+    with h1:
+        history_limit = st.selectbox("Show latest", [20, 50, 100, 200], index=0, key="history_limit")
+    with h2:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Refresh", use_container_width=True, key="history_refresh"):
+            load_previous_calls.clear()
 
-with col2:
-    st.subheader("🎤 Student Response")
-    input_mode = st.radio(
-        "Response input type",
-        ["Text", "Audio URL"],
-        horizontal=True,
-        key="student_input_mode",
-    )
-    if input_mode == "Text":
-        student_input = st.text_area("", height=210, placeholder="Enter what the student said when retelling the lecture...", key="student")
-        student_audio_url = ""
+    try:
+        with st.spinner("Loading previous tests..."):
+            past_calls = load_previous_calls(history_limit)
+    except Exception as e:
+        past_calls = []
+        st.error(f"❌ Could not load previous tests from MongoDB: {e}")
+
+    selected = None
+    if not past_calls:
+        st.info("No previous tests found.")
     else:
-        student_audio_url = st.text_input(
-            "Audio URL",
-            placeholder="https://.../answer.wav",
-            key="student_audio_url",
+        summary_rows = []
+        for call in past_calls:
+            summary = summarize_call(call)
+            summary_rows.append({
+                "Date (UTC)": call["created_at"].strftime("%Y-%m-%d %H:%M:%S") if call.get("created_at") else "",
+                "Score /90": summary["score"],
+                "Key Points": summary["total_key_points"],
+                "Student Response": summary["student_preview"],
+                "Lecture": summary["lecture_preview"],
+            })
+        st.caption("👆 Click a row to open that test.")
+        table_event = st.dataframe(
+            summary_rows,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="history_table",
         )
-        st.caption("The audio will be transcribed automatically and used as the student response.")
-        student_input = ""
+        selected_rows = table_event.selection.rows
+        st.divider()
+        if not selected_rows:
+            st.info("Select a row in the table above to see the full test.")
+            selected = None
+        else:
+            selected = selected_rows[0]
 
-col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
-with col_btn2:
-    evaluate_btn = st.button("🚀 Evaluate Retell", use_container_width=True, type="primary")
+    if selected is not None:
+        call = past_calls[selected]
+        call_input = call.get("input", {}) or {}
+        lecture_text = call_input.get("lecture_transcript", "")
+        student_text = call_input.get("student_transcript", "")
+        audio_url = call_input.get("student_audio_url", "")
 
-if evaluate_btn:
-    missing = not lecture_input or (input_mode == "Text" and not student_input) or (input_mode == "Audio URL" and not student_audio_url)
-    if missing:
-        st.error("⚠️ Please provide the lecture transcript and the student response (text or audio URL).")
-    else:
-        try:
-            if input_mode == "Audio URL":
-                with st.spinner("🎧 Transcribing student audio..."):
-                    student_input = transcribe_audio(student_audio_url, reference_text=lecture_input)
-                if not student_input or not student_input.strip():
-                    st.error("❌ Transcription returned no text. Please check the audio URL and try again.")
-                    st.stop()
-                st.success("✅ Audio transcribed successfully!")
-                with st.expander("📝 Transcribed Student Response", expanded=True):
-                    st.write(student_input)
+        st.caption(f"Call id: {call['_id']}")
+        with st.expander("📚 Lecture Transcript", expanded=False):
+            st.write(lecture_text)
+        with st.expander("🎤 Student Response", expanded=True):
+            st.write(student_text)
+            if audio_url:
+                st.caption(f"Audio URL: {audio_url}")
 
-            with st.spinner("🔄 Analyzing retell performance..."):
-                status_v2, result_v2 = call_retell("retell", lecture_input, student_input, api_token)
+        output = get_call_output(call)
+        if output and "final_result" in output:
+            past_data = parse_retell_result(output, lecture_text, student_text)
+            render_idea_coverage(past_data)
+            st.divider()
+            render_score_summary(past_data, key_prefix=f"history_{call['_id']}")
+            st.markdown("##### 🔗 Key Point Matches")
+            render_key_point_matches(past_data)
+            st.markdown("##### 📚 Extracted Key Points")
+            render_key_points(past_data)
+            with st.expander("📄 Raw Data"):
+                st.json(output)
+        else:
+            st.warning("This call has no successful evaluation output.")
+            if output:
+                st.json(output)
 
-            # Handle failure
-            if status_v2 != 200:
-                if status_v2 == 401:
-                    st.error("🔒 Authentication failed. Please check your API token.")
-                elif status_v2 == 404:
-                    st.error("🔍 API endpoint not found.")
+# ---------------------------------------------------------------------------
+# Evaluate tab
+# ---------------------------------------------------------------------------
+with tab_eval:
+    st.markdown("Evaluate a student's retell against the API to review key points and key point matches.")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("📚 Lecture Transcript")
+        lecture_input = st.text_area("", height=250, placeholder="Paste the original lecture transcript here...", key="lecture")
+
+    with col2:
+        st.subheader("🎤 Student Response")
+        input_mode = st.radio(
+            "Response input type",
+            ["Text", "Audio URL"],
+            horizontal=True,
+            key="student_input_mode",
+        )
+        if input_mode == "Text":
+            student_input = st.text_area("", height=210, placeholder="Enter what the student said when retelling the lecture...", key="student")
+            student_audio_url = ""
+        else:
+            student_audio_url = st.text_input(
+                "Audio URL",
+                placeholder="https://.../answer.wav",
+                key="student_audio_url",
+            )
+            st.caption("The audio will be transcribed automatically and used as the student response.")
+            student_input = ""
+
+    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+    with col_btn2:
+        evaluate_btn = st.button("🚀 Evaluate Retell", use_container_width=True, type="primary")
+
+    if evaluate_btn:
+        missing = not lecture_input or (input_mode == "Text" and not student_input) or (input_mode == "Audio URL" and not student_audio_url)
+        if missing:
+            st.error("⚠️ Please provide the lecture transcript and the student response (text or audio URL).")
+        else:
+            try:
+                if input_mode == "Audio URL":
+                    with st.spinner("🎧 Transcribing student audio..."):
+                        student_input = transcribe_audio(student_audio_url, reference_text=lecture_input)
+                    if not student_input or not student_input.strip():
+                        st.error("❌ Transcription returned no text. Please check the audio URL and try again.")
+                        st.stop()
+                    st.success("✅ Audio transcribed successfully!")
+                    with st.expander("📝 Transcribed Student Response", expanded=True):
+                        st.write(student_input)
+
+                with st.spinner("🔄 Analyzing retell performance..."):
+                    status, result = call_retell("retell", lecture_input, student_input, api_token)
+
+                if status != 200:
+                    if status == 401:
+                        st.error("🔒 Authentication failed. Please check your API token.")
+                    elif status == 404:
+                        st.error("🔍 API endpoint not found.")
+                    else:
+                        st.error(f"❌ Error {status}: {result}")
                 else:
-                    st.error(f"❌ Error {status_v2}: {result_v2}")
-            else:
-                data_v2 = parse_retell_result(result_v2, lecture_input, student_input)
+                    data = parse_retell_result(result, lecture_input, student_input)
 
-                # Log the call to MongoDB
-                call_id = save_call(
-                    lecture_transcript=lecture_input,
-                    student_transcript=student_input,
-                    student_audio_url=student_audio_url,
-                    api_response_v2=result_v2,
+                    # Log the call to MongoDB
+                    call_id = save_call(
+                        lecture_transcript=lecture_input,
+                        student_transcript=student_input,
+                        student_audio_url=student_audio_url,
+                        api_response=result,
+                    )
+
+                    st.session_state.retell_history.append({
+                        'timestamp': datetime.now().strftime("%H:%M:%S"),
+                        'score': data['content_score_90'],
+                        'total_points': data['total_key_points'],
+                    })
+
+                    st.session_state.last_retell_response = data['complete_result']
+                    st.session_state.last_content_score_90 = data['content_score_90']
+
+                    st.success("✅ Retell evaluation completed!")
+                    if isinstance(call_id, str) and call_id.startswith("ERROR:"):
+                        st.warning(f"⚠️ Could not log this call to MongoDB: {call_id[7:].strip()}")
+                    else:
+                        load_previous_calls.clear()
+                        st.caption(f"🗄️ Call logged to MongoDB (`{MONGO_DB}.{MONGO_CALLS_COLLECTION}`) — id: {call_id}")
+
+                    st.divider()
+
+                    # Covered / uncovered ideas first
+                    render_idea_coverage(data)
+                    st.divider()
+
+                    render_score_summary(data, key_prefix="eval")
+                    st.markdown("##### 🔗 Key Point Matches")
+                    render_key_point_matches(data)
+                    st.markdown("##### 📚 Extracted Key Points")
+                    render_key_points(data)
+
+                    st.divider()
+
+                    tab_cov, tab_agent, tab_raw = st.tabs([
+                        "📊 Coverage",
+                        "🤖 Agent Details",
+                        "📄 Raw Data",
+                    ])
+
+                    with tab_cov:
+                        render_coverage(data)
+
+                    with tab_agent:
+                        st.markdown("**Agent 1 — Lecture Output**")
+                        st.json(data['lecture_kp_output'])
+                        st.markdown("**Agent 1 — Student Output**")
+                        st.json(data['student_kp_output'])
+                        st.markdown("**Agent 2 — Coverage Evaluator**")
+                        st.json(data['agent2'])
+                        st.markdown("**Agent 3 — Feedback**")
+                        st.json(data['feedback_obj'])
+
+                    with tab_raw:
+                        st.json(data['complete_result'])
+
+            except requests.exceptions.Timeout:
+                st.error("⏱️ Request timed out. Please try again.")
+            except requests.exceptions.ConnectionError:
+                st.error("🔌 Connection failed. Please check if the API server is running.")
+            except Exception as e:
+                st.error(f"❌ Unexpected error: {str(e)}")
+
+    # --- Report an incorrect result ---
+    if st.session_state.last_retell_response is not None:
+        st.divider()
+        with st.expander("🚩 Report this result", expanded=False):
+            st.caption(
+                "If the score or feedback looks wrong, submit the marks you expected along with a remark. "
+                "This is stored for review together with the full evaluation response."
+            )
+            with st.form("report_form", clear_on_submit=True):
+                expected_marks = st.number_input(
+                    "Expected marks (out of 90)",
+                    min_value=0,
+                    max_value=90,
+                    value=int(st.session_state.last_content_score_90 or 0),
+                    step=1,
                 )
+                remark = st.text_area(
+                    "Remark",
+                    placeholder="Explain what you think is incorrect about the score or feedback...",
+                    height=120,
+                )
+                submit_report = st.form_submit_button("📤 Submit Report", type="primary", use_container_width=True)
 
-                st.session_state.retell_history.append({
-                    'timestamp': datetime.now().strftime("%H:%M:%S"),
-                    'score': data_v2['content_score_90'],
-                    'total_points': data_v2['total_key_points'],
-                })
-
-                st.session_state.last_retell_response = {
-                    "v2": data_v2['complete_result'],
-                }
-                st.session_state.last_content_score_90 = data_v2['content_score_90']
-
-                st.success("✅ Retell evaluation completed!")
-                if isinstance(call_id, str) and call_id.startswith("ERROR:"):
-                    st.warning(f"⚠️ Could not log this call to MongoDB: {call_id[7:].strip()}")
+            if submit_report:
+                if not remark or not remark.strip():
+                    st.warning("⚠️ Please add a remark describing the issue before submitting.")
                 else:
-                    st.caption(f"🗄️ Call logged to MongoDB (`{MONGO_DB}.{MONGO_CALLS_COLLECTION}`) — id: {call_id}")
+                    try:
+                        with st.spinner("💾 Submitting report..."):
+                            report_id = save_report(
+                                expected_marks=int(expected_marks),
+                                remark=remark.strip(),
+                                retell_response=st.session_state.last_retell_response,
+                            )
+                        st.success(f"✅ Report submitted successfully! Reference ID: {report_id}")
+                    except Exception as e:
+                        st.error(f"❌ Failed to submit report: {str(e)}")
 
-                st.divider()
-
-                # Covered / uncovered ideas first
-                render_idea_coverage(data_v2)
-                st.divider()
-
-                # Full result panel
-                render_score_summary(data_v2, key_prefix="v2")
-                st.markdown("##### 🔗 Key Point Matches")
-                render_key_point_matches(data_v2)
-                st.markdown("##### 📚 Extracted Key Points")
-                render_key_points(data_v2)
-
-                st.divider()
-
-                # Detailed tabs
-                tab_cov, tab_agent, tab_raw = st.tabs([
-                    "📊 Coverage",
-                    "🤖 Agent Details",
-                    "📄 Raw Data",
-                ])
-
-                with tab_cov:
-                    render_coverage(data_v2)
-
-                with tab_agent:
-                    st.markdown("**Agent 1 — Lecture Output**")
-                    st.json(data_v2['lecture_kp_output'])
-                    st.markdown("**Agent 1 — Student Output**")
-                    st.json(data_v2['student_kp_output'])
-                    st.markdown("**Agent 2 — Coverage Evaluator**")
-                    st.json(data_v2['agent2'])
-                    st.markdown("**Agent 3 — Feedback**")
-                    st.json(data_v2['feedback_obj'])
-
-                with tab_raw:
-                    st.json(data_v2['complete_result'])
-
-        except requests.exceptions.Timeout:
-            st.error("⏱️ Request timed out. Please try again.")
-        except requests.exceptions.ConnectionError:
-            st.error("🔌 Connection failed. Please check if the API server is running.")
-        except Exception as e:
-            st.error(f"❌ Unexpected error: {str(e)}")
-
-# --- Report an incorrect result ---
-if st.session_state.last_retell_response is not None:
     st.divider()
-    with st.expander("🚩 Report this result", expanded=False):
-        st.caption(
-            "If the score or feedback looks wrong, submit the marks you expected along with a remark. "
-            "This is stored for review together with the full evaluation response."
-        )
-        with st.form("report_form", clear_on_submit=True):
-            expected_marks = st.number_input(
-                "Expected marks (out of 90)",
-                min_value=0,
-                max_value=90,
-                value=int(st.session_state.last_content_score_90 or 0),
-                step=1,
-            )
-            remark = st.text_area(
-                "Remark",
-                placeholder="Explain what you think is incorrect about the score or feedback...",
-                height=120,
-            )
-            submit_report = st.form_submit_button("📤 Submit Report", type="primary", use_container_width=True)
-
-        if submit_report:
-            if not remark or not remark.strip():
-                st.warning("⚠️ Please add a remark describing the issue before submitting.")
-            else:
-                try:
-                    with st.spinner("💾 Submitting report..."):
-                        report_id = save_report(
-                            expected_marks=int(expected_marks),
-                            remark=remark.strip(),
-                            retell_response=st.session_state.last_retell_response,
-                        )
-                    st.success(f"✅ Report submitted successfully! Reference ID: {report_id}")
-                except Exception as e:
-                    st.error(f"❌ Failed to submit report: {str(e)}")
-
-st.divider()
-st.caption("💡 Tip: Each evaluation calls /retell-v2 to review key points and key point matches.")
+    st.caption("💡 Tip: Each evaluation calls /retell to review covered and uncovered ideas, key points and key point matches.")
